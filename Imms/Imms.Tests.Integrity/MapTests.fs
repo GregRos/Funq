@@ -234,13 +234,90 @@ type MapTests<'e when 'e : comparison>(items : 'e array, ?seed : int) =
     member x.Find iters = create_test iters "Find" (x.find iters >> toList1 >> List.cast)
     member x.Gen_disjoint iters = create_test iters "GenDisjoint" (x.gen_equal_keys_dif_values iters >> toList1 >> List.cast)
 
+open Xunit
+open FsCheck
+open FsCheck.Xunit
 
+module MapTestsFsCheck =
+    type [<RequireQualifiedAccess>] MapAction<'k, 'v> =
+        | SetKey of 'k * 'v
+        | RemoveRandom
 
+    /// Keeps a reference to all persistent collections returned after
+    /// performing an action, and after they are all applied, checks
+    /// that they equal what we would get from FSharp.Core.Map
+    let inline eqMapsAfterSteps
+        (fsMap:Map<'k, 'v>)
+        (testMap:'m)
+        (actions: MapAction<'k, 'v>[])
+        (setKey: 'k->'v->'m->'m when 'k: comparison and 'v: comparison)
+        (removeKey: 'k->'m->'m when 'k: comparison and 'v: comparison)
+        (eqMap: 'm->Map<'k, 'v>->bool) =
 
+        let applyAction fsMap testMap action =
+            match action with
+            | MapAction.SetKey(k, v) ->
+                (Map.add k v fsMap, setKey k v testMap)
+            | MapAction.RemoveRandom when Map.isEmpty fsMap ->
+                (fsMap, testMap)
+            | MapAction.RemoveRandom ->
+                let idx = Gen.choose(0, fsMap.Count - 1).Sample(0, 1).Head
+                let ary = Map.toArray fsMap
+                let key = fst ary.[idx]
+                (Map.remove key fsMap, removeKey key testMap)
 
+        let (fsMaps, testMaps) =
+            Array.fold
+                (fun acc action ->
+                    match acc with
+                    | (fsMap::fsMaps, testMap::testMaps) ->
+                        let (newF, newT) = applyAction fsMap testMap action
+                        (newF::fsMap::fsMaps, newT::testMap::testMaps)
+                    | _ -> failwith "Logic error")
+                ([fsMap], [testMap])
+                actions
 
+        List.forall2
+            eqMap
+            testMaps
+            fsMaps
 
-            
+    let immMap2FsMap (m:ImmMap<_,_>) =
+        Seq.fold
+            (fun acc (KeyValue(k,v)) -> Map.add k v acc)
+            (Map.empty)
+            (m.ToArray())
 
+    [<Property>]
+    let immMapsEqualFsMapsAfterSteps (startFsMap:Map<int, int>) (actions: MapAction<int, int>[]) =
+        let testMap = ImmMap.ToImmMap startFsMap
+        let eqMap (m:ImmMap<_,_>) (fsMap:Map<_,_>) =
+            immMap2FsMap m = fsMap
 
+        eqMapsAfterSteps 
+            startFsMap
+            testMap
+            actions
+            (ImmMap.set)
+            (ImmMap.remove)
+            eqMap
 
+    let sortedMap2FsMap (m:ImmSortedMap<_,_>) =
+        Seq.fold
+            (fun acc (KeyValue(k,v)) -> Map.add k v acc)
+            (Map.empty)
+            (m.ToArray())
+
+    [<Property>]
+    let immSortedMapsEqualFsMapsAfterSteps (startFsMap:Map<int, int>) (actions: MapAction<int, int>[]) =
+        let testMap = ImmSortedMap.ToImmSortedMap startFsMap
+        let eqMap (m:ImmSortedMap<_,_>) (fsMap:Map<_,_>) =
+            sortedMap2FsMap m = fsMap
+
+        eqMapsAfterSteps 
+            startFsMap
+            testMap
+            actions
+            (ImmSortedMap.set)
+            (ImmSortedMap.remove)
+            eqMap
