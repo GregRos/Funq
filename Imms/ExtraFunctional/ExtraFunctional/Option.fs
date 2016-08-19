@@ -2,7 +2,7 @@
 module Option = 
     let orValue (v : 'v) = function Some u -> u | None -> v
     let orMaybe (v : 'v option) = function Some u -> Some u | None -> v
-    let asNull = Option.toObj
+    let asNull (v : 'v option) = if v.IsNone then null else v.Value
     let cast<'a,'b> (opt : 'a option) : 'b option = opt |> Option.map (fun a -> a :> obj :?> 'b)
     
 [<AutoOpen>]
